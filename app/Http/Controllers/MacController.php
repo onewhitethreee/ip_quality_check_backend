@@ -57,20 +57,75 @@ class MacController extends Controller
      */
     private function queryMacServer($query, $server)
     {
+        Log::debug("Querying $server for MAC: $query");
         try {
             $url = 'https://' . $server . '/' . $query;
             $response = Http::get($url);
-            $data = $response->json();
 
-            if (!isset($data['success']) || $data['success'] !== true) {
+            if ($response->failed()) {
+                Log::debug("Failed response from $server: " . $response->status());
                 return null;
             }
 
-            return $this->modifyData($data);
+            // 根据不同的服务器处理不同的响应
+            if ($server == 'api.maclookup.app/v2/macs') {
+                $data = $response->json();
+                if (!$data || !isset($data['success']) || $data['success'] !== true) {
+                    Log::debug("Invalid response from api.maclookup.app");
+                    return null;
+                }
+                Log::debug("Response from $server:", ['data' => $data]);
+                return $this->modifyData($data);
+            } else if ($server == 'api.macvendors.com') {
+                $content = $response->body();
+                if (empty($content)) {
+                    Log::debug("Empty response from macvendors.com");
+                    return null;
+                }
+                Log::debug("Response from $server:", ['content' => $content]);
+                // 为 macvendors.com 构造完整的返回数据结构
+                return $this->createMacVendorsResponse($query, $content);
+            } else {
+                Log::debug("Unsupported server: $server");
+                return null;
+            }
         } catch (\Exception $e) {
             Log::error("MAC lookup failed for server {$server}: " . $e->getMessage());
             return null;
         }
+    }
+
+    /**
+     * 为 macvendors.com 创建标准化的响应数据
+     *
+     * @param string $mac MAC地址
+     * @param string $company 公司名称
+     * @return array
+     */
+    private function createMacVendorsResponse($mac, $company)
+    {
+        // 检查单播/多播以及本地/全球地址
+        $firstByte = hexdec(substr($mac, 0, 2));
+        $isMulticast = ($firstByte & 0x01) === 0x01;
+        $isLocal = ($firstByte & 0x02) === 0x02;
+
+        return [
+            'success' => true,
+            'macPrefix' => implode(':', str_split(substr($mac, 0, 6), 2)),
+            'company' => $company,
+            'country' => 'N/A',  // macvendors.com 不提供这些信息
+            'address' => 'N/A',
+            'blockStart' => implode(':', str_split(substr($mac, 0, 6) . '000000', 2)),
+            'blockEnd' => implode(':', str_split(substr($mac, 0, 6) . 'FFFFFF', 2)),
+            'blockSize' => '16777216',  // 2^24
+            'blockType' => 'MA-L',
+            'updated' => date('Y-m-d'),
+            'isMulticast' => $isMulticast,
+            'isLocal' => $isLocal,
+            'isGlobal' => !$isLocal,
+            'isUnicast' => !$isMulticast,
+            'source' => 'macvendors.com'  // 添加数据源标识
+        ];
     }
 
     /**
@@ -101,6 +156,7 @@ class MacController extends Controller
         $data['blockEnd'] = isset($data['blockEnd']) ? implode(':', str_split($data['blockEnd'], 2)) : 'N/A';
         $data['blockSize'] = $data['blockSize'] ?? 'N/A';
         $data['blockType'] = $data['blockType'] ?? 'N/A';
+        $data['source'] = 'maclookup.app';  // 添加数据源标识
 
         return $data;
     }
@@ -125,18 +181,21 @@ class MacController extends Controller
         // 获取选择的服务器
         $selectedServers = $request->query('servers');
         $servers = $selectedServers ? explode(',', $selectedServers) : ['api.maclookup.app/v2/macs'];
+        Log::debug("Selected servers: " . implode(',', $servers));
+
 
         // 验证MAC地址是否合法
         if (!$this->isValidMAC($query)) {
-            Log::debug('Invalid MAC address: ' . $query);
+            Log::debug("Invalid MAC address: $query");
             return response()->json(['error' => 'Invalid MAC address'], 400);
         }
 
         // 生成缓存键
         $cacheKey = 'mac_lookup_' . md5($query . '_' . implode(',', $servers));
-
+        
         // 从缓存获取或发起API请求
         $data = Cache::remember($cacheKey, 60 * 60 * 24, function () use ($query, $servers) {
+            Log::debug("Fetching data from servers: " . implode(',', $servers));
             try {
                 // 从多个服务器获取信息
                 $results = [];
@@ -144,9 +203,13 @@ class MacController extends Controller
                     $info = $this->queryMacServer($query, $server);
                     if ($info) {
                         $results[$server] = $info;
+                    }else{
+                        Log::debug("No data found for MAC: $query from server: $server");
                     }
+                    
                 }
 
+                // 修改这里：只要有一个服务器返回结果就不算错误
                 if (empty($results)) {
                     return ['__error' => 'No data found for this MAC address', '__code' => 404];
                 }
@@ -157,6 +220,7 @@ class MacController extends Controller
                 return ['__error' => $e->getMessage(), '__code' => 500];
             }
         });
+        Log::debug("Data from cache: " . json_encode($data));
 
         // 检查返回的数据是否包含错误
         if (isset($data['__error'])) {
@@ -165,7 +229,7 @@ class MacController extends Controller
             return response()->json(['error' => $errorMessage], $errorCode);
         }
 
-        // 返回成功结果，并添加缓存控制头
+        // 返回成功结果
         return response()->json($data)
             ->header('Cache-Control', 'public, max-age=86400')
             ->header('Expires', gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
