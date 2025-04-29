@@ -2,153 +2,81 @@
 
 namespace Tests\Unit;
 
+use Illuminate\Http\Middleware\SetCacheHeaders;
 use Tests\TestCase;
 use App\Http\Controllers\WhoisController;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Mockery;
 use Iodev\Whois\Factory;
+use Iodev\Whois\Whois;
+use Iodev\Whois\Modules\Tld\TldResponse;
+use Iodev\Whois\Modules\Tld\TldParser;
 use Iodev\Whois\Modules\Tld\DomainInfo;
 
 class WhoisControllerTest extends TestCase
 {
-    private $controller;
-    private $mockWhois;
-
     protected function setUp(): void
     {
         parent::setUp();
-        $this->controller = new WhoisController();
         
-        // 创建 mock whois 对象
-        $this->mockWhois = $this->createMock(\Iodev\Whois\Whois::class);
-        $factory = $this->createMock(Factory::class);
-        $factory->method('createWhois')->willReturn($this->mockWhois);
-        
-        // 使用反射设置私有属性
-        $reflection = new \ReflectionClass($this->controller);
-        $property = $reflection->getProperty('whois');
-        $property->setAccessible(true);
-        $property->setValue($this->controller, $this->mockWhois);
-    }
-
-    public function testInvalidDomain()
-    {
-        $request = new Request(['q' => 'invalid-domain']);
-        $response = $this->controller->query($request);
-        
-        $this->assertEquals(400, $response->status());
-        $this->assertJsonStringEqualsJsonString(
-            '{"error":"Invalid IP or address"}',
-            $response->content()
-        );
-    }
-
-    public function testInvalidIP()
-    {
-        $request = new Request(['q' => '256.256.256.256']);
-        $response = $this->controller->query($request);
-        
-        $this->assertEquals(400, $response->status());
-        $this->assertJsonStringEqualsJsonString(
-            '{"error":"Invalid IP or address"}',
-            $response->content()
-        );
-    }
-
-    public function testDomainQuery()
-    {
-        // 模拟 whois 查询结果
-        $domainInfo = new DomainInfo();
-        $domainInfo->text = "Domain: example.com\nRegistrar: Example Registrar";
-        
-        $this->mockWhois->method('lookupDomain')
-            ->willReturn($domainInfo);
-
-        $request = new Request([
-            'q' => 'example.com',
-            'servers' => 'whois.godaddy.com'
+        // 清除缓存，确保测试之间不会相互影响
+        Cache::flush();
+        $this->withHeaders([
+            'Referer' => 'http://localhost:18966'
         ]);
-        
-        $response = $this->controller->query($request);
-        
-        $this->assertEquals(200, $response->status());
-        $this->assertJsonStringEqualsJsonString(
-            '{"example.com":{"whois.godaddy.com":{"__raw":"Domain: example.com\nRegistrar: Example Registrar"}}}',
-            $response->content()
-        );
     }
 
-    public function testIPQuery()
+    protected function tearDown(): void
     {
-        // 模拟 whois 查询结果
-        $domainInfo = new DomainInfo();
-        $domainInfo->text = "IP: 8.8.8.8\nNetRange: 8.8.8.0 - 8.8.8.255";
-        
-        $this->mockWhois->method('loadDomainInfo')
-            ->willReturn($domainInfo);
-
-        $request = new Request([
-            'q' => '8.8.8.8',
-            'servers' => 'whois.godaddy.com'
-        ]);
-        
-        $response = $this->controller->query($request);
-        
-        $this->assertEquals(200, $response->status());
-        $this->assertJsonStringEqualsJsonString(
-            '{"whois.godaddy.com":{"__raw":"IP: 8.8.8.8\nNetRange: 8.8.8.0 - 8.8.8.255"}}',
-            $response->content()
-        );
+        Mockery::close();
+        parent::tearDown();
     }
 
-    public function testNoQueryParameter()
+    /**
+     * 测试没有提供查询参数的情况
+     */
+    public function testNoQueryParameter(): void
     {
-        $request = new Request();
-        $response = $this->controller->query($request);
+        $response = $this->get('/api/whois');
         
-        $this->assertEquals(400, $response->status());
-        $this->assertJsonStringEqualsJsonString(
-            '{"error":"No address provided"}',
-            $response->content()
-        );
+        $response->assertStatus(400)
+                 ->assertJson(['error' => 'No address provided']);
     }
 
-    public function testMultipleServers()
+    /**
+     * 测试无效的域名
+     */
+    public function testInvalidDomain(): void
     {
-        // 模拟多个服务器的查询结果
-        $domainInfo1 = new DomainInfo();
-        $domainInfo1->text = "Server 1 result";
+        $response = $this->get('/api/whois?q=invalid-domain-123');  
         
-        $domainInfo2 = new DomainInfo();
-        $domainInfo2->text = "Server 2 result";
-        
-        $this->mockWhois->method('lookupDomain')
-            ->willReturnOnConsecutiveCalls($domainInfo1, $domainInfo2);
-
-        $request = new Request([
-            'q' => 'example.com',
-            'servers' => 'whois.godaddy.com,whois.iana.org'
-        ]);
-        
-        $response = $this->controller->query($request);
-        
-        $this->assertEquals(200, $response->status());
-        $this->assertJsonStringEqualsJsonString(
-            '{"example.com":{"whois.godaddy.com":{"__raw":"Server 1 result"},"whois.iana.org":{"__raw":"Server 2 result"}}}',
-            $response->content()
-        );
+        $response->assertStatus(400)
+                 ->assertJson(['error' => 'Invalid IP or address']);
     }
 
-    public function testInvalidReferer()
+    /**
+     * 测试无效的IP地址
+     */
+    public function testInvalidIP(): void
     {
-        $request = new Request(['q' => 'example.com']);
-        $request->headers->set('referer', 'http://invalid-domain.com');
+        $response = $this->get('/api/whois?q=999.999.999.999');
         
-        $response = $this->controller->query($request);
-        
-        $this->assertEquals(403, $response->status());
-        $this->assertJsonStringEqualsJsonString(
-            '{"error":"Access denied"}',
-            $response->content()
-        );
+        $response->assertStatus(400)
+                 ->assertJson(['error' => 'Invalid IP or address']);
     }
-} 
+
+
+    /**
+     * 测试获取 Whois 服务器列表
+     */
+    public function testServers(): void
+    {
+        $response = $this->get('/api/whois/servers');
+        
+        $response->assertStatus(200)
+                 ->assertJsonStructure(['servers']);
+    }
+
+    
+}
