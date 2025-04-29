@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 use Iodev\Whois\Factory;
+use Illuminate\Support\Facades\Cache;
 
 use Illuminate\Http\Request;
 
@@ -79,7 +80,7 @@ class WhoisController extends Controller
     {
         try {
             $whois = Factory::get()->createWhois();
-            
+
             if ($this->isValidIP($query)) {
                 return $whois->loadDomainInfo($query);
             } else {
@@ -123,47 +124,67 @@ class WhoisController extends Controller
             return response()->json(['error' => 'Invalid IP or address'], 400);
         }
 
-        try {
-            if ($this->isValidIP($query)) {
-                // IP 查询 - 从多个服务器获取信息
-                $results = [];
-                foreach ($servers as $server) {
-                    $info = $this->queryWhoisServer($query, $server);
-                    if ($info && $info->text) {
-                        $results[$server] = [
-                            '__raw' => $info->text
-                        ];
+        // 生成缓存键
+        $cacheKey = 'whois_' . md5($query . '_' . implode(',', $servers));
+
+        // 先尝试从缓存获取数据
+        $data = Cache::remember($cacheKey, 60 * 60 * 24, function () use ($query, $servers) {
+            try {
+                if ($this->isValidIP($query)) {
+                    // IP 查询 - 从多个服务器获取信息
+                    $results = [];
+                    foreach ($servers as $server) {
+                        $info = $this->queryWhoisServer($query, $server);
+                        if ($info && $info->text) {
+                            $results[$server] = [
+                                '__raw' => $info->text
+                            ];
+                        }
                     }
-                }
 
-                if (empty($results)) {
-                    return response()->json(['error' => 'No data found for this IP'], 404);
-                }
-
-                return response()->json($results);
-            } else {
-                // 域名查询 - 从多个服务器获取信息
-                $results = [];
-                foreach ($servers as $server) {
-                    $info = $this->queryWhoisServer($query, $server);
-                    if ($info && $info->text) {
-                        $results[$server] = [
-                            '__raw' => $info->text
-                        ];
+                    if (empty($results)) {
+                        // 不要返回response对象，而是返回带有错误标识的数据
+                        return ['__error' => 'No data found for this IP', '__code' => 404];
                     }
-                }
 
-                if (empty($results)) {
-                    return response()->json(['error' => 'No data found for this domain'], 404);
-                }
+                    return $results;
+                } else {
+                    // 域名查询 - 从多个服务器获取信息
+                    $results = [];
+                    foreach ($servers as $server) {
+                        $info = $this->queryWhoisServer($query, $server);
+                        if ($info && $info->text) {
+                            $results[$server] = [
+                                '__raw' => $info->text
+                            ];
+                        }
+                    }
 
-                return response()->json([
-                    $query => $results
-                ]);
+                    if (empty($results)) {
+                        // 不要返回response对象，而是返回带有错误标识的数据
+                        return ['__error' => 'No data found for this domain', '__code' => 404];
+                    }
+
+                    return [
+                        $query => $results
+                    ];
+                }
+            } catch (\Exception $e) {
+                return ['__error' => $e->getMessage(), '__code' => 500];
             }
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
-        }
-    }
+        });
 
+        // 检查返回的数据是否包含错误
+        if (isset($data['__error'])) {
+            // 从缓存数据中提取错误信息和状态码
+            $errorMessage = $data['__error'];
+            $errorCode = $data['__code'] ?? 500;
+            return response()->json(['error' => $errorMessage], $errorCode);
+        }
+
+        // 返回正常数据，并添加缓存控制头
+        return response()->json($data)
+            ->header('Cache-Control', 'public, max-age=86400')
+            ->header('Expires', gmdate('D, d M Y H:i:s', time() + 86400) . ' GMT');
+    }
 }
