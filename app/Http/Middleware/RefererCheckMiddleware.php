@@ -25,23 +25,23 @@ class RefererCheckMiddleware
         $referer = $request->header('referer');
         
         // 添加详细的调试日志
-        Log::info('Referer Check Debug:', [
-            'raw_referer' => $referer,
-            'parsed_referer' => [
-                'host' => parse_url($referer, PHP_URL_HOST),
-                'port' => parse_url($referer, PHP_URL_PORT),
-                'scheme' => parse_url($referer, PHP_URL_SCHEME)
-            ],
-            'raw_allowed_domains' => $allowedDomains,
-            'cleaned_domains' => array_map(function($domain) {
-                $parsed = parse_url($domain);
-                $host = $parsed['host'] ?? $domain;
-                $port = $parsed['port'] ?? null;
-                return $host . ($port ? ':' . $port : '');
-            }, $allowedDomains),
-            'env_allowed_referers' => env('ALLOWED_REFERERS'),
-            'config_allowed_referers' => config('app.allowed_referers')
-        ]);
+        // Log::info('Referer Check Debug:', [
+        //     'raw_referer' => $referer,
+        //     'parsed_referer' => [
+        //         'host' => parse_url($referer, PHP_URL_HOST),
+        //         'port' => parse_url($referer, PHP_URL_PORT),
+        //         'scheme' => parse_url($referer, PHP_URL_SCHEME)
+        //     ],
+        //     'raw_allowed_domains' => $allowedDomains,
+        //     'cleaned_domains' => array_map(function($domain) {
+        //         $parsed = parse_url($domain);
+        //         $host = $parsed['host'] ?? $domain;
+        //         $port = $parsed['port'] ?? null;
+        //         return $host . ($port ? ':' . $port : '');
+        //     }, $allowedDomains),
+        //     'env_allowed_referers' => env('ALLOWED_REFERERS'),
+        //     'config_allowed_referers' => config('app.allowed_referers')
+        // ]);
 
         if (!$referer) {
             return response()->json(['error' => 'What are you doing?'], 403);
