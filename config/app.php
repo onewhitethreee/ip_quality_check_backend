@@ -123,6 +123,7 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
-    'allowed_domains' => env('ALLOWED_DOMAINS', 'localhost'),
+
+    'allowed_referers' => explode(',', env('ALLOWED_REFERERS', 'localhost,127.0.0.1')),
 
 ];

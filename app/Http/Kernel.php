@@ -36,8 +36,8 @@ class Kernel extends HttpKernel
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
             \Illuminate\Routing\Middleware\ThrottleRequests::class.':api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
-            \App\Http\Middleware\RateLimit::class,
-            \App\Http\Middleware\SpeedLimit::class,
+            \App\Http\Middleware\RateLimit::class, // 限流
+            \App\Http\Middleware\SpeedLimit::class, // 限速
         ],
     ];
 
@@ -50,5 +50,6 @@ class Kernel extends HttpKernel
      */
     protected $routeMiddleware = [
         //
+        'referer.check' => \App\Http\Middleware\RefererCheckMiddleware::class,
     ];
 } 
