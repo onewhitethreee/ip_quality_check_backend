@@ -30,38 +30,7 @@ class WhoisController extends Controller
     {
         return filter_var($ip, FILTER_VALIDATE_IP) != false;
     }
-    /*
-     * 检查来源请求是否合法
-     * 
-     * @param string $domain
-     * @return bool
-     */
-    private function refererCheck($referer)
-    {
-        // 允许的来源域名列表
-        $allowedDomains = config('app.allowed_referers');
-        // 本地环境允许所有来源
-        if (app()->environment('local')) {
-            return true;
-        }
 
-        if (!$referer) {
-            return false;
-        }
-
-        $refererHost = parse_url($referer, PHP_URL_HOST);
-
-        foreach ($allowedDomains as $domain) {
-            if (
-                $refererHost === $domain ||
-                (strpos($domain, '*') === 0 && substr($refererHost, -strlen(substr($domain, 1))) === substr($domain, 1))
-            ) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     private function getWhoisServers()
     {
@@ -103,12 +72,6 @@ class WhoisController extends Controller
     }
     public function query(Request $request)
     {
-        // 验证请求来源
-        $referer = $request->header('referer');
-        if (!$this->refererCheck($referer)) {
-            return response()->json(['error' => $referer ? 'Access denied' : 'What are you doing?'], 403);
-        }
-
         // 获取查询参数
         $query = $request->query('q');
         if (!$query) {

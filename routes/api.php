@@ -20,11 +20,10 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-// Whois API
+// Referer请求头检查是否合法
 Route::middleware(RefererCheckMiddleware::class)->group(function () {
     // 获取WHOIS信息
     Route::get('/whois', [WhoisController::class, 'query']);
-    
     // 获取WHOIS服务器列表
     Route::get('/whois/servers', [WhoisController::class, 'servers']);
 });
