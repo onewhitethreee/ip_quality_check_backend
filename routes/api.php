@@ -4,7 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\WhoisController;
 use App\Http\Middleware\RefererCheckMiddleware;
-
+use App\Http\Controllers\MacController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -26,4 +26,8 @@ Route::middleware(RefererCheckMiddleware::class)->group(function () {
     Route::get('/whois', [WhoisController::class, 'query']);
     // 获取WHOIS服务器列表
     Route::get('/whois/servers', [WhoisController::class, 'servers']);
+    // 获取MAC信息
+    Route::get('/mac', [MacController::class, 'query']);
+    // 获取MAC服务器列表
+    Route::get('/mac/servers', [MacController::class, 'servers']);
 });
