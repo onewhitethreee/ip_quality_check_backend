@@ -5,6 +5,7 @@ use Iodev\Whois\Factory;
 use Illuminate\Support\Facades\Cache;
 
 use Illuminate\Http\Request;
+use Log;
 
 class WhoisController extends Controller
 {
@@ -56,6 +57,7 @@ class WhoisController extends Controller
                 return $whois->lookupDomain($query);
             }
         } catch (\Exception $e) {
+            
             return null;
         }
     }
