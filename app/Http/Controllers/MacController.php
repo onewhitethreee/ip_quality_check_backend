@@ -209,7 +209,6 @@ class MacController extends Controller
                     
                 }
 
-                // 修改这里：只要有一个服务器返回结果就不算错误
                 if (empty($results)) {
                     return ['__error' => 'No data found for this MAC address', '__code' => 404];
                 }
