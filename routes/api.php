@@ -21,3 +21,4 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 // Whois API
 Route::get('/whois', [WhoisController::class, 'query']);
+Route::get('/whois/servers', [WhoisController::class, 'servers']);

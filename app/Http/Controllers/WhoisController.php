@@ -38,9 +38,7 @@ class WhoisController extends Controller
     private function refererCheck($referer)
     {
         // 允许的来源域名列表
-        $allowedDomains = [
-            'localhost',
-        ];
+        $allowedDomains = config('app.allowed_referers');
         // 本地环境允许所有来源
         if (app()->environment('local')) {
             return true;
@@ -63,6 +61,45 @@ class WhoisController extends Controller
 
         return false;
     }
+
+    private function getWhoisServers()
+    {
+        return [
+            'whois.godaddy.com',
+            'whois.iana.org',
+            'whois.arin.net',
+            'whois.apnic.net',
+            'whois.ripe.net',
+            'whois.lacnic.net',
+            'whois.afrinic.net'
+        ];
+    }
+
+    private function queryWhoisServer($query, $server)
+    {
+        try {
+            $whois = Factory::get()->createWhois();
+            
+            if ($this->isValidIP($query)) {
+                return $whois->loadDomainInfo($query);
+            } else {
+                return $whois->lookupDomain($query);
+            }
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+    /*
+     * 获取Whois服务器列表
+     * 
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function servers()
+    {
+        return response()->json([
+            'servers' => $this->getWhoisServers()
+        ]);
+    }
     public function query(Request $request)
     {
         // 验证请求来源
@@ -77,31 +114,52 @@ class WhoisController extends Controller
             return response()->json(['error' => 'No address provided'], 400);
         }
 
+        // 获取选择的服务器
+        $selectedServers = $request->query('servers');
+        $servers = $selectedServers ? explode(',', $selectedServers) : ['whois.godaddy.com'];
+
         // 验证输入是否为有效的IP或域名
         if (!$this->isValidIP($query) && !$this->isValidDomain($query)) {
             return response()->json(['error' => 'Invalid IP or address'], 400);
         }
 
-        // 创建WHOIS查询实例
-        $whois = Factory::get()->createWhois();
-
         try {
             if ($this->isValidIP($query)) {
-                // 查询IP信息
-                $info = $whois->loadDomainInfo($query);
-                if (!$info) {
+                // IP 查询 - 从多个服务器获取信息
+                $results = [];
+                foreach ($servers as $server) {
+                    $info = $this->queryWhoisServer($query, $server);
+                    if ($info && $info->text) {
+                        $results[$server] = [
+                            '__raw' => $info->text
+                        ];
+                    }
+                }
+
+                if (empty($results)) {
                     return response()->json(['error' => 'No data found for this IP'], 404);
                 }
 
-                return response()->json($info->toArray());
+                return response()->json($results);
             } else {
-                // 查询域名信息
-                $info = $whois->lookupDomain($query);
-                if (!$info) {
+                // 域名查询 - 从多个服务器获取信息
+                $results = [];
+                foreach ($servers as $server) {
+                    $info = $this->queryWhoisServer($query, $server);
+                    if ($info && $info->text) {
+                        $results[$server] = [
+                            '__raw' => $info->text
+                        ];
+                    }
+                }
+
+                if (empty($results)) {
                     return response()->json(['error' => 'No data found for this domain'], 404);
                 }
 
-                return response()->json($info->toArray());
+                return response()->json([
+                    $query => $results
+                ]);
             }
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
