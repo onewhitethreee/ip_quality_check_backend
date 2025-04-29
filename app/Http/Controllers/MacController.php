@@ -169,6 +169,7 @@ class MacController extends Controller
      */
     public function query(Request $request)
     {
+        
         // 获取查询参数
         $query = $request->query('q');
         if (!$query) {
@@ -193,6 +194,11 @@ class MacController extends Controller
         // 生成缓存键
         $cacheKey = 'mac_lookup_' . md5($query . '_' . implode(',', $servers));
         
+        // 检查是否需要刷新缓存
+        $refresh = $request->boolean('refresh', false);
+        if ($refresh) {
+            Cache::forget($cacheKey);
+        }
         // 从缓存获取或发起API请求
         $data = Cache::remember($cacheKey, 60 * 60 * 24, function () use ($query, $servers) {
             Log::debug("Fetching data from servers: " . implode(',', $servers));
