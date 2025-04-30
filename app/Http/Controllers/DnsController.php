@@ -5,9 +5,19 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class DnsController extends Controller
 {
+    // DNS服务器映射到其DoH服务
+    private $dnsToDoHMap = [
+        'Google' => 'https://dns.google/resolve?',
+        'Cloudflare' => 'https://cloudflare-dns.com/dns-query?ct=application/dns-json&',
+        'AdGuard' => 'https://dns.adguard.com/resolve?',
+        'AliDNS' => 'https://dns.alidns.com/resolve?',
+        // 添加更多映射
+    ];
+
     // 普通DNS服务器列表
     private $dnsServers = [
         'Google' => '8.8.8.8',
@@ -36,69 +46,71 @@ class DnsController extends Controller
      */
     public function resolve(Request $request)
     {
-        // 获取和验证参数
+        // 获取参数
         $hostname = $request->query('hostname');
         $type = $request->query('type', 'A');
         $server = $request->query('server');
 
+        // 参数验证
         if (empty($hostname)) {
             return response()->json(['error' => 'Missing hostname parameter'], 400);
         }
 
-        if (!str_contains($hostname, '.')) {
+        if (!preg_match('/^[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}$/', $hostname)) {
             return response()->json(['error' => 'Invalid hostname'], 400);
         }
 
-        // 收集所有查询任务
-        $result_dns = [];
-        $result_doh = [];
-
-        // 传统DNS查询
-        if ($server) {
-            // 如果指定了服务器，只查询该服务器
-            if (isset($this->dnsServers[$server])) {
-                $result = $this->resolveDns($hostname, $type, $server, $this->dnsServers[$server]);
-                $result_dns[] = $result;
-            } else {
-                return response()->json(['error' => 'Invalid DNS server specified'], 400);
-            }
-        } else {
-            // // 否则查询所有服务器
-            // foreach ($this->dnsServers as $name => $ip) {
-            //     $result = $this->resolveDns($hostname, $type, $name, $ip);
-            //     $result_dns[] = $result;
-            // }
+        if (empty($server)) {
             return response()->json(['error' => 'No server specified'], 403);
         }
 
-        // DNS-over-HTTPS查询
-        if ($server) {
-            // 如果指定了服务器，只查询该服务器
-            if (isset($this->dohServers[$server])) {
-                $result = $this->resolveDoh($hostname, $type, $server, $this->dohServers[$server]);
-                $result_doh[] = $result;
-            }
-        } else {
-            // 否则查询所有服务器
-            return response()->json(['error' => 'No DNS server specified'], 403);
+        if (!isset($this->dnsServers[$server]) && !isset($this->dohServers[$server])) {
+            return response()->json(['error' => 'Invalid DNS server specified'], 400);
         }
 
-        return response()->json([
+        // 使用缓存避免重复查询
+        $cacheKey = "dns:{$hostname}:{$type}:{$server}";
+        $cacheTTL = 600; // 缓存10分钟
+
+        // 先检查缓存
+        if (Cache::has($cacheKey)) {
+            return response()->json(Cache::get($cacheKey));
+        }
+
+        // 初始化结果数组
+        $result_dns = [];
+        $result_doh = [];
+
+        // 执行DoH查询（如果服务器支持）
+        if (isset($this->dohServers[$server])) {
+            $result = $this->resolveDoh($hostname, $type, $server, $this->dohServers[$server]);
+            $result_doh[] = $result;
+        }
+
+        // 始终执行传统DNS查询（无论DoH是否成功）
+        if (isset($this->dnsServers[$server])) {
+            $result = $this->resolveDns($hostname, $type, $server, $this->dnsServers[$server]);
+            $result_dns[] = $result;
+        }
+
+        $response = [
             'hostname' => $hostname,
             'result_dns' => $result_dns,
             'result_doh' => $result_doh
-        ]);
+        ];
+
+        // 存入缓存
+        Cache::put($cacheKey, $response, $cacheTTL);
+
+        return response()->json($response);
     }
 
     /**
-     * 使用传统DNS服务器查询
+     * 使用传统DNS服务器查询（在不能使用exec的情况下）
      */
     private function resolveDns($hostname, $type, $name, $server)
     {
         try {
-            // 设置DNS服务器
-            putenv("RES_NAMESERVERS={$server}");
-
             // 根据DNS记录类型设置DNS查询类型
             $recordType = match ($type) {
                 'A' => DNS_A,
@@ -110,18 +122,18 @@ class DnsController extends Controller
                 default => DNS_A,
             };
 
-            // Log::info("Querying DNS for {$hostname} with type {$type} using server {$server}");
+            // 使用PHP原生函数进行DNS查询
+            // 注意：这不能保证使用指定的DNS服务器，但是在无法使用exec的情况下是一种替代方案
+            $result = [];
 
-            // 使用PHP内置函数进行DNS查询
+            // 获取系统默认解析结果
             $addresses = dns_get_record($hostname, $recordType);
 
             if (empty($addresses)) {
-                Log::warning("No DNS records found for {$hostname}");
                 return [$name => ['N/A']];
             }
 
             // 处理不同记录类型的结果
-            $result = [];
             foreach ($addresses as $record) {
                 if ($type == 'A' && isset($record['ip'])) {
                     $result[] = $record['ip'];
@@ -130,7 +142,7 @@ class DnsController extends Controller
                 } elseif ($type == 'CNAME' && isset($record['target'])) {
                     $result[] = $record['target'];
                 } elseif ($type == 'MX' && isset($record['target'])) {
-                    $result[] = $record['pri'] . ' ' . $record['target'] . '.';
+                    $result[] = $record['pri'] . ' ' . $record['target'];
                 } elseif ($type == 'NS' && isset($record['target'])) {
                     $result[] = $record['target'];
                 } elseif ($type == 'TXT' && isset($record['txt'])) {
@@ -138,10 +150,13 @@ class DnsController extends Controller
                 }
             }
 
-            Log::info("DNS query result: " . json_encode($result));
-            return [$name => empty($result) ? ['N/A'] : $result];
+            if (empty($result)) {
+                return [$name => ['N/A']];
+            }
+
+            return [$name => $result];
         } catch (\Exception $e) {
-            Log::error('DNS解析错误: ' . $e->getMessage());
+            Log::error('DNS解析错误: ' . $e->getMessage(), ['exception' => $e]);
             return [$name => ['N/A']];
         }
     }
@@ -152,14 +167,26 @@ class DnsController extends Controller
     private function resolveDoh($hostname, $type, $name, $url)
     {
         try {
-            $response = Http::timeout(3)
+            // 设置低超时时间提高响应速度
+            $response = Http::timeout(1)
+                ->connectTimeout(0.5)
                 ->withHeaders(['Accept' => 'application/dns-json'])
                 ->get($url . "name={$hostname}&type={$type}");
 
+            if (!$response->successful()) {
+                return [$name => ['N/A']];
+            }
+
             $data = $response->json();
-            $addresses = isset($data['Answer']) ? array_map(function ($answer) {
-                return $answer['data'];
-            }, $data['Answer']) : ['N/A'];
+
+            // 处理不同类型的DoH响应格式
+            if (isset($data['Answer'])) {
+                $addresses = array_map(function ($answer) {
+                    return $answer['data'];
+                }, $data['Answer']);
+            } else {
+                $addresses = ['N/A'];
+            }
 
             if (empty($addresses)) {
                 return [$name => ['N/A']];
@@ -167,9 +194,12 @@ class DnsController extends Controller
 
             return [$name => $addresses];
         } catch (\Exception $e) {
-            Log::error('DoH解析错误: ' . $e->getMessage());
+            Log::error('DoH解析错误: ' . $e->getMessage(), [
+                'exception' => $e,
+                'url' => $url,
+                'hostname' => $hostname
+            ]);
             return [$name => ['N/A']];
         }
     }
-
 }
