@@ -24,7 +24,8 @@ class RateLimit
 
         if (RateLimiter::tooManyAttempts($key, $maxAttempts)) {
             // 记录被限流的IP
-            Log::warning('Rate limit exceeded', [
+            
+            Log::channel('rate_limit')->warning('Rate limit exceeded', [
                 'ip' => $key,
                 'attempts' => RateLimiter::attempts($key),
                 'remaining' => RateLimiter::remaining($key, $maxAttempts)
