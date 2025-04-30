@@ -5,6 +5,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\WhoisController;
 use App\Http\Middleware\RefererCheckMiddleware;
 use App\Http\Controllers\MacController;
+use App\Http\Controllers\DnsController;
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -30,4 +32,6 @@ Route::middleware(RefererCheckMiddleware::class)->group(function () {
     Route::get('/mac', [MacController::class, 'query']);
     // 获取MAC服务器列表
     Route::get('/mac/servers', [MacController::class, 'servers']);
+    // 获取DNS信息
+    Route::get('/dnsresolver', [DnsController::class, 'resolve']);
 });
