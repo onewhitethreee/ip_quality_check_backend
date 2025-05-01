@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\GeoIpController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\WhoisController;
@@ -34,4 +35,6 @@ Route::middleware(RefererCheckMiddleware::class)->group(function () {
     Route::get('/mac/servers', [MacController::class, 'servers']);
     // 获取DNS信息
     Route::get('/dnsresolver', [DnsController::class, 'resolve']);
+    // 获取GeoIP信息
+    Route::get('/geoIp', [GeoIpController::class, 'lookup']);
 });
