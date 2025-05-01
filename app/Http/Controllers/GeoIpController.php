@@ -4,11 +4,13 @@ namespace App\Http\Controllers;
 use MaxMind\Db\Reader;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class GeoIpController extends Controller
 {
     private static $cityLookup = null;
-    private static $asnLookup = null; // 修正变量名
+    private static $asnLookup = null;
+    private const CACHE_TTL = 3600; // 1 hour cache
 
     public function __construct()
     {
@@ -21,54 +23,53 @@ class GeoIpController extends Controller
             $cityPath = base_path("storage/app/GeoLite2-City.mmdb");
             $asnPath = base_path('storage/app/GeoLite2-ASN.mmdb');
 
-            // 检查文件是否存在
-            if (!file_exists($cityPath)) {
-                Log::error("City database file does not exist: " . $cityPath);
+            if (!file_exists($cityPath) || !file_exists($asnPath)) {
+                throw new \Exception("Required MaxMind database files are missing");
             }
 
-            if (!file_exists($asnPath)) {
-                Log::error("ASN database file does not exist: " . $asnPath);
-            }
-
-            if (self::$cityLookup == null) {
+            if (self::$cityLookup === null) {
                 self::$cityLookup = new Reader($cityPath);
             }
 
-            if (self::$asnLookup == null) { // 修正变量名
+            if (self::$asnLookup === null) {
                 self::$asnLookup = new Reader($asnPath);
             }
         } catch (\Exception $e) {
             Log::error("Failed to initialize MaxMind databases: " . $e->getMessage());
+            throw $e;
         }
     }
 
     public function lookup(Request $request)
     {
-        // 可选：允许从查询参数传入IP，适合测试
         $ip = $request->query('ip', $request->ip());
-
-        Log::info("Looking up IP: " . $ip);
-
-        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
-            return response()->json([
-                'error' => 'Invalid IP address'
-            ], 400);
-        }
-
         $lang = in_array($request->query('lang'), ['zh-CN', 'en', 'fr']) ? $request->query('lang') : 'en';
 
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+            return response()->json(['error' => 'Invalid IP address'], 400);
+        }
+
+        // Generate cache key
+        $cacheKey = "geoip:{$ip}:{$lang}";
+
+        // Try to get from cache first
+        if ($cachedResult = Cache::get($cacheKey)) {
+            return response()->json($cachedResult);
+        }
+
         try {
-            // 验证数据库是否已成功加载
             if (self::$cityLookup === null || self::$asnLookup === null) {
                 throw new \Exception("MaxMind databases are not loaded properly");
             }
 
             $city = self::$cityLookup->get($ip);
-            $asn = self::$asnLookup->get($ip); // 修正变量名
-
-            
+            $asn = self::$asnLookup->get($ip);
 
             $result = $this->modifyJson($ip, $lang, $city, $asn);
+            
+            // Cache the result
+            Cache::put($cacheKey, $result, self::CACHE_TTL);
+
             return response()->json($result);
         } catch (\Exception $e) {
             Log::error("Error in GeoIP lookup: " . $e->getMessage());
