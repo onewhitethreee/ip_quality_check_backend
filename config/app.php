@@ -126,4 +126,6 @@ return [
 
     'allowed_referers' => explode(',', env('ALLOWED_REFERERS', 'localhost,127.0.0.1')),
 
+    
+
 ];

@@ -7,7 +7,7 @@ use App\Http\Controllers\WhoisController;
 use App\Http\Middleware\RefererCheckMiddleware;
 use App\Http\Controllers\MacController;
 use App\Http\Controllers\DnsController;
-
+use App\Http\Controllers\validateConfigController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -37,4 +37,6 @@ Route::middleware(RefererCheckMiddleware::class)->group(function () {
     Route::get('/dnsresolver', [DnsController::class, 'resolve']);
     // 获取GeoIP信息
     Route::get('/geoIp', [GeoIpController::class, 'lookup']);
+    // 验证配置
+    Route::get('/configs', [validateConfigController::class, 'validateConfig']);
 });
